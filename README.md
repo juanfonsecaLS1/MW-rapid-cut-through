@@ -22,6 +22,55 @@ To begin our analysis, we first need to load the necessary R packages.
 These packages provide the functions required for spatial data
 manipulation, network analysis, and data visualization.
 
+``` r
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+if (!require("remotes")) install.packages("remotes")
+pkgs = c(
+    "sf",
+    "tidyverse",
+    "zonebuilder",
+    "tmap",
+    "sfnetworks",
+    "tidygraph",
+    "igraph",
+    "paletteer"
+)
+remotes::install_cran(pkgs)
+sapply(pkgs, require, character.only = TRUE)
+```
+
+A quick check of the version of the packages used for this:
+
+``` r
+sapply(pkgs,packageVersion)
+```
+
+    $sf
+    [1]  1  0 21
+
+    $tidyverse
+    [1] 2 0 0
+
+    $zonebuilder
+    [1] 0 1 0
+
+    $tmap
+    [1] 4 1
+
+    $sfnetworks
+    [1] 0 6 5
+
+    $tidygraph
+    [1] 1 3 1
+
+    $igraph
+    [1] 2 1 4
+
+    $paletteer
+    [1] 1 6 0
+
+## Select Study Area
+
 For this demonstration, we will focus our analysis on the city of Leeds.
 We use the `zonebuilder` package to define our study area. This package
 helps in creating consistent and reproducible geographical zones for
@@ -43,9 +92,11 @@ Next, we define assumed speed limits for different road types. In a
 real-world scenario, this data might come from more detailed datasets
 like Ordnance Survey MasterMap Highways Network or OpenStreetMap (OSM).
 For this example, we’ll use a simplified set of speeds. We also define
-speeds for congested conditions, assuming a reduction of 10 mph for
-Motorways, A roads, and B roads. These speeds are converted to meters
-per second, which is a common unit for network analysis calculations.
+speeds for congested conditions, **assuming a reduction of 10 mph for
+Motorways, A roads, and B roads**. Similarly, congested speeds might be
+available from different sources and might produce better results. These
+speeds are converted to meters per second, which is a common unit for
+network analysis calculations.
 
 ``` r
 custom_wp <- tibble(
@@ -56,15 +107,31 @@ custom_wp <- tibble(
   )
 ```
 
+## Road Network Data
+
 The road network data used in this analysis is OS OpenRoads, a freely
-available dataset from Ordnance Survey. We load the road links within
-our defined study area (using the `zones_wkt` filter) and exclude links
-classified as ‘access roads’ as these are typically not part of through
-routes. We then join our custom speed information to the network data.
+available dataset from Ordnance Survey
+[here](https://osdatahub.os.uk/downloads/open/OpenRoads). The following
+code downloads the dataset directly:
+
+``` r
+if(!file.exists("00_data/oproad_gpkg_gb.zip")){
+  dir.create("00_data",showWarnings = F)
+  u <- "https://api.os.uk/downloads/v1/products/OpenRoads/downloads?area=GB&format=GeoPackage&redirect"
+  options(timeout = 360)
+  download.file(u, destfile = "00_data/oproad_gpkg_gb.zip", mode = "wb")
+  unzip("00_data/oproad_gpkg_gb.zip",exdir = "00_data")
+}
+```
+
+We load the road links within our defined study area (using the
+`zones_wkt` filter) and exclude links classified as ‘access roads’ as
+these are typically not part of through routes. We then join our custom
+speed information to the network data.
 
 ``` r
 selected_network <- st_read(
-  "00_data/oproad_gb.gpkg",
+  "00_data/Data/oproad_gb.gpkg",
   wkt_filter = zones_wkt,
   query = "SELECT * FROM \"road_link\" WHERE road_function NOT LIKE '%access%'") |> 
   left_join(custom_wp,by = "road_function") |> 
@@ -77,7 +144,8 @@ selected_network <- st_read(
 ```
 
     Reading query `SELECT * FROM "road_link" WHERE road_function NOT LIKE '%access%''
-    from data source `C:\temp_jf\MW-rapid-cut-through\00_data\oproad_gb.gpkg' using driver `GPKG'
+    from data source `C:\temp_jf\MW-rapid-cut-through\00_data\Data\oproad_gb.gpkg' 
+      using driver `GPKG'
     Re-reading with feature count reset from 33542 to 29003
     Simple feature collection with 29003 features and 20 fields
     Geometry type: LINESTRING
@@ -88,18 +156,7 @@ selected_network <- st_read(
 Let’s take a quick look at the road network we’ve prepared. The map
 below shows the different types of roads in our Leeds study area.
 
-    Warning in grid.Call(C_stringMetric, as.graphicsAnnot(x$label)): font family
-    not found in Windows font database
-    Warning in grid.Call(C_stringMetric, as.graphicsAnnot(x$label)): font family
-    not found in Windows font database
-
-    Warning in grid.Call(C_textBounds, as.graphicsAnnot(x$label), x$x, x$y, : font
-    family not found in Windows font database
-
-    Warning in grid.Call.graphics(C_text, as.graphicsAnnot(x$label), x$x, x$y, :
-    font family not found in Windows font database
-
-![](README_files/figure-commonmark/unnamed-chunk-4-1.png)
+![](README_files/figure-commonmark/unnamed-chunk-6-1.png)
 
 To perform network analysis, we need to convert our spatial lines data
 into a graph representation. The `sfnetworks` package is ideal for this,
@@ -198,7 +255,7 @@ sf_edges |>
 
     `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
 
-![](README_files/figure-commonmark/unnamed-chunk-7-1.png)
+![](README_files/figure-commonmark/unnamed-chunk-9-1.png)
 
 Under congested conditions, most local roads loose *importance* as the
 major roads provide less connectivity. However, a portion of them become
@@ -229,32 +286,12 @@ cut_map <- sf_edges |>
     values = c(0.2,1),guide = 'none',na.value = 0.4
     )+
   guides(col=guide_legend(nrow=3,byrow=TRUE))+
-  theme(text = element_text(family = "Roboto Condensed"), legend.position = "right")
+  theme(legend.position = "right")
 
 cut_map
 ```
 
-    Warning in grid.Call(C_textBounds, as.graphicsAnnot(x$label), x$x, x$y, : font
-    family not found in Windows font database
-    Warning in grid.Call(C_textBounds, as.graphicsAnnot(x$label), x$x, x$y, : font
-    family not found in Windows font database
-
-    Warning in grid.Call(C_stringMetric, as.graphicsAnnot(x$label)): font family
-    not found in Windows font database
-
-    Warning in grid.Call(C_textBounds, as.graphicsAnnot(x$label), x$x, x$y, : font
-    family not found in Windows font database
-
-    Warning in grid.Call.graphics(C_text, as.graphicsAnnot(x$label), x$x, x$y, :
-    font family not found in Windows font database
-    Warning in grid.Call.graphics(C_text, as.graphicsAnnot(x$label), x$x, x$y, :
-    font family not found in Windows font database
-    Warning in grid.Call.graphics(C_text, as.graphicsAnnot(x$label), x$x, x$y, :
-    font family not found in Windows font database
-    Warning in grid.Call.graphics(C_text, as.graphicsAnnot(x$label), x$x, x$y, :
-    font family not found in Windows font database
-
-![](README_files/figure-commonmark/unnamed-chunk-9-1.png)
+![](README_files/figure-commonmark/unnamed-chunk-11-1.png)
 
 ``` r
 ggsave(plot = cut_map,filename = "cut_map.png",dpi = 320,width = 24,height = 14,units = "cm")
