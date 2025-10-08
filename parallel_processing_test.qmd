@@ -175,7 +175,8 @@ microbenchmark::microbenchmark(
       smooth_net,
       future.globals = FALSE,
       future.seed = TRUE,
-      future.chunk.size = Inf
+      future.chunk.size = Inf,
+      future.stdout = FALSE
     )
   },
   times = 5

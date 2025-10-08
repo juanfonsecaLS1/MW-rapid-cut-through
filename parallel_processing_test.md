@@ -168,7 +168,8 @@ microbenchmark::microbenchmark(
       smooth_net,
       future.globals = FALSE,
       future.seed = TRUE,
-      future.chunk.size = Inf
+      future.chunk.size = Inf,
+      future.stdout = FALSE
     )
   },
   times = 5
@@ -176,6 +177,6 @@ microbenchmark::microbenchmark(
 ```
 
     Unit: seconds
-            expr      min       lq     mean   median        uq       max neval
-      std_lapply 6.895465 7.363959 7.582720 7.639782  7.987517  8.026879     5
-     with_future 7.389779 8.300201 9.122314 9.276085 10.122321 10.523184     5
+            expr      min       lq     mean   median       uq      max neval
+      std_lapply 8.010112 10.97748 10.94937 11.58606 11.89471 12.27847     5
+     with_future 9.795426  9.90951 12.70636 11.00201 11.93133 20.89353     5
