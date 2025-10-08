@@ -1,0 +1,183 @@
+---
+title: "Parallel Test"
+format: gfm
+---
+
+## Set-up
+
+```{r}
+#| label: load-packages
+#| output: false
+
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+if (!require("remotes")) {
+  install.packages("remotes")
+}
+pkgs = c(
+  "sf",
+  "tidyverse",
+  "zonebuilder",
+  "tmap",
+  "sfnetworks",
+  "tidygraph",
+  "igraph",
+  "paletteer",
+  "future.apply",
+  "parallelly"
+)
+remotes::install_cran(pkgs)
+sapply(pkgs, require, character.only = TRUE)
+
+```
+
+```{r}
+sapply(pkgs, packageVersion)
+```
+
+## Select Study Area
+
+
+```{r}
+selected_zones <- zonebuilder::zb_zone(
+  "Leeds",
+  n_segments = 8,
+  n_circles = 3
+) |>
+  st_transform(27700)
+
+# We then create a Well-Known Text (WKT) representation of the convex hull of these zones.
+# This WKT filter will be used later to select network data only within our area of interest.
+zones_wkt <- selected_zones |>
+  st_union() |>
+  st_convex_hull() |>
+  st_as_text()
+```
+
+```{r}
+custom_wp <- tibble(
+  road_function = c("Local Road", "Minor Road", "B Road", "A Road", "Motorway"),
+  speed_ff = round(c(20, 20, 30, 40, 70) * (0.44704), 5),
+  speed_cg = round(c(20, 20, 20, 30, 60) * (0.44704), 5),
+)
+```
+
+## Road Network Data
+
+
+```{r}
+if (!file.exists("00_data/oproad_gpkg_gb.zip")) {
+  dir.create("00_data", showWarnings = F)
+  u <- "https://api.os.uk/downloads/v1/products/OpenRoads/downloads?area=GB&format=GeoPackage&redirect"
+  options(timeout = 360)
+  download.file(u, destfile = "00_data/oproad_gpkg_gb.zip", mode = "wb")
+  unzip("00_data/oproad_gpkg_gb.zip", exdir = "00_data")
+}
+```
+
+
+
+```{r}
+selected_network <- st_read(
+  "00_data/Data/oproad_gb.gpkg",
+  wkt_filter = zones_wkt,
+  query = "SELECT * FROM \"road_link\" WHERE road_function NOT LIKE '%access%'"
+) |>
+  left_join(custom_wp, by = "road_function") |>
+  # With the speeds assigned, we can calculate travel times for each road segment.
+  # We calculate travel times for both free-flow (speed-limit) and congested conditions.
+  mutate(
+    tra_time_ff = length / speed_ff, # Travel time in free-flow (seconds)
+    tra_time_cg = length / speed_cg # Travel time in congested conditions (seconds)
+  )
+
+```
+
+Let's take a quick look at the road network we've prepared. The map below shows the different types of roads in our Leeds study area.
+
+```{r}
+#| echo: false
+
+road_levels <- c(
+  "Motorway",
+  "A Road",
+  "B Road",
+  "Minor Road",
+  "Local Road"
+)
+
+roads_1 <- selected_network |>
+  mutate(
+    road_function = factor(road_function, levels = road_levels, ordered = T)
+  ) |>
+  ggplot() +
+  geom_sf(aes(
+    col = road_function,
+    linewidth = road_function,
+    alpha = road_function
+  )) +
+  theme_void() +
+  labs(col = "Road Function") +
+  scale_color_discrete(type = paletteer_d("ggsci::default_locuszoom")) +
+  scale_linewidth_manual(
+    values = 1 / c(1.5, 1.8, 2.05, 2.5, 3.5),
+    guide = 'none'
+  ) +
+  scale_alpha_manual(
+    values = c(1, 0.8, 0.75, 0.7, 0.3),
+    guide = 'none'
+  ) +
+  guides(col = guide_legend(nrow = 3, byrow = TRUE)) +
+  theme(legend.position = "right")
+
+roads_1
+```
+
+```{r}
+zones_list <- st_intersects(selected_network, selected_zones) |>
+  vapply(\(x) head(x, 1), numeric(1))
+```
+
+```{r}
+split_roads <- split(selected_network, zones_list)
+```
+
+```{r}
+number_of_cores <- availableCores()
+plan(multisession, workers = floor(number_of_cores / 2))
+```
+
+
+```{r}
+smooth_net <- function(X) {
+  X |>
+    sfnetworks::as_sfnetwork() |>
+    tidygraph::convert(
+      sfnetworks::to_spatial_smooth,
+      summarise_attributes = list(
+        length = "sum",
+        tra_time_ff = "sum",
+        tra_time_cg = "sum",
+        "first" # Keep the first value for other attributes
+      ),
+      require_equal = "road_function"
+    )
+}
+```
+
+```{r}
+microbenchmark::microbenchmark(
+  std_lapply = {
+    lapply(split_roads, smooth_net)
+  },
+  with_future = {
+    future_lapply(
+      split_roads,
+      smooth_net,
+      future.globals = FALSE,
+      future.seed = TRUE,
+      future.chunk.size = Inf
+    )
+  },
+  times = 5
+)
+```
